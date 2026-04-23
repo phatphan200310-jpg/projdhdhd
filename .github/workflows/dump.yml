@@ -1,0 +1,54 @@
+name: Il2CppInspector (Quét sâu)
+on: [workflow_dispatch]
+
+jobs:
+  run_inspector:
+    runs-on: windows-latest
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install gdown
+        run: pip install gdown requests
+
+      - name: Download from Google Drive
+        run: |
+          gdown --folder "https://drive.google.com/drive/folders/1Kzwj7u5UV33OXBnFf5fghLXVI_gR2Jao" -O ./game_files
+        continue-on-error: true
+
+      - name: Download Il2CppInspector (Tool Xịn)
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/djkaty/Il2CppInspector/releases/download/2021.2/Il2CppInspector-2021.2.zip" -OutFile "inspector.zip"
+          Expand-Archive -Path "inspector.zip" -DestinationPath "./inspector"
+
+      - name: Run Inspector (Heuristic Scan)
+        run: |
+          $unity = Get-ChildItem -Path ./game_files -Recurse | Where-Object { $_.Name -match "^(UnityFramework|libil2cpp\.so)$" } | Select-Object -First 1
+          $metadata = Get-ChildItem -Path ./game_files -Recurse -Filter "global-metadata.dat" | Select-Object -First 1
+          
+          if ($null -eq $unity -or $null -eq $metadata) {
+              Write-Error "LỖI: Không tìm thấy file UnityFramework hoặc global-metadata.dat!"
+              exit 1
+          }
+          
+          New-Item -ItemType Directory -Force -Path ./output
+          
+          Write-Host "Bắt đầu dùng Il2CppInspector quét sâu. Quá trình này có thể mất vài phút vì nó phải phân tích Assembly..."
+          
+          # Chạy Inspector
+          $dumpProcess = Start-Process -FilePath "./inspector/Il2CppInspector.exe" -ArgumentList "-i `"$($unity.FullName)`" -m `"$($metadata.FullName)`" -o ./output" -PassThru -NoNewWindow
+          $dumpProcess | Wait-Process -Timeout 300 -ErrorAction SilentlyContinue
+          
+          if (-not $dumpProcess.HasExited) {
+              $dumpProcess | Stop-Process -Force
+              Write-Error "LỖI: Tool bị treo! Cấu trúc Unity đã bị Tencent băm nát tới mức Inspector cũng không cứu được."
+          }
+        continue-on-error: true
+
+      - name: Upload Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: Inspector-Offsets
+          path: ./output/
